@@ -1,82 +1,66 @@
 import asyncio
-
-import av
-import cv2
 import logging
+from datetime import time
+
+import cv2
 import numpy as np
 from aiohttp import web
 from aiortc import RTCPeerConnection, VideoStreamTrack, RTCSessionDescription
 from aiortc.contrib.media import MediaRelay
-from aiortc.mediastreams import VideoFrame
+from av import VideoFrame
 
-# import subprocess,os
-# subprocess.run('start microsoft.windows.camera:', shell=True)
 # Настройка логирования
 logging.basicConfig(level=logging.INFO)
 
-
-# Класс для захвата видео с камеры
-class CameraStreamTrack(VideoStreamTrack):
+# Класс для генерации тестового видео
+class MockCameraStreamTrack(VideoStreamTrack):
     def __init__(self):
         super().__init__()
-        self.cap = cv2.VideoCapture(0)  # 0 — индекс встроенной камеры
+        self.relay = MediaRelay()
 
     async def recv(self):
-        if not self.cap.isOpened():
-            raise Exception("Не удалось открыть камеру")
+        # Генерация чёрного кадра с текстом
+        width, height = 640, 480
+        frame_data = np.zeros((height, width, 3), dtype=np.uint8)
+        timestamp = time.strftime("%Y-%m-%d %H:%M:%S")
+        cv2.putText(frame_data, f"Mock Camera - {timestamp}", (10, 50), cv2.FONT_HERSHEY_SIMPLEX, 1, (255, 255, 255), 2)
 
-        ret, frame = self.cap.read()  # Считываем кадр
-        if not ret:
-            raise Exception("Не удалось получить кадр с камеры")
-
-        # Преобразуем кадр из BGR (OpenCV) в RGB (WebRTC)
-        frame_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-        frame_av = VideoFrame.from_ndarray(frame_rgb, format="rgb24")
-        frame_av.pts = None  # Обнуляем временные метки
-        frame_av.time_base = None
-        return frame_av
-
+        # Преобразование в VideoFrame
+        frame = VideoFrame.from_ndarray(frame_data, format="bgr24")
+        frame.pts = None  # Обнуляем временные метки
+        frame.time_base = None
+        return frame
 
 # Обработка WebSocket-соединений
-async def offer(request):
-    params = await request.json()
-    offer = RTCSessionDescription(sdp=params["sdp"], type=params["type"])
+pcs = set()  # Множество для хранения активных соединений
 
-    pc = RTCPeerConnection()
+async def offer(request):
+    pc = RTCPeerConnection(
+        configuration={"iceServers": [{"urls": "stun:stun.l.google.com:19302"}]}
+    )
     pcs.add(pc)
 
-    @pc.on("connectionstatechange")
-    async def on_connectionstatechange():
-        if pc.connectionState == "failed":
-            await pc.close()
-            pcs.discard(pc)
+    params = await request.json()
+    print("Received SDP Offer:", params["sdp"])  # <-- Лог для отладки
 
-    # Установка предложения
-    await pc.setRemoteDescription(offer)
-
-    # Добавление треков
-    video_track = CameraStreamTrack()
+    offer = RTCSessionDescription(sdp=params["sdp"], type=params["type"])
+    video_track = MockCameraStreamTrack()
     pc.addTrack(video_track)
 
-    # Создание ответа
+    await pc.setRemoteDescription(offer)
     answer = await pc.createAnswer()
     await pc.setLocalDescription(answer)
 
-    # Отправка ответа клиенту
-    return web.json_response(
-        {"sdp": pc.localDescription.sdp, "type": pc.localDescription.type}
-    )
+    return web.json_response({
+        "sdp": pc.localDescription.sdp,
+        "type": pc.localDescription.type
+    })
 
-
-# Основной цикл приложения
-pcs = set()  # Множество для хранения активных соединений
-
-
+# Завершение работы приложения
 async def on_shutdown(app):
     coros = [pc.close() for pc in pcs]
     await asyncio.gather(*coros)
     pcs.clear()
-
 
 # Запуск сервера
 app = web.Application()
