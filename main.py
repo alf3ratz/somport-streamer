@@ -1,249 +1,82 @@
-# import asyncio
-# import logging
-# from datetime import time
-#
-# import cv2
-# import numpy as np
-# from aiohttp import web
-# from aiortc import RTCPeerConnection, VideoStreamTrack, RTCSessionDescription
-# from aiortc.contrib.media import MediaRelay
-# from av import VideoFrame
-#
-# # Настройка логирования
-# logging.basicConfig(level=logging.INFO)
-#
-# # Класс для генерации тестового видео
-# class MockCameraStreamTrack(VideoStreamTrack):
-#     def __init__(self):
-#         super().__init__()
-#         self.relay = MediaRelay()
-#
-#     async def recv(self):
-#         # Генерация чёрного кадра с текстом
-#         width, height = 640, 480
-#         frame_data = np.zeros((height, width, 3), dtype=np.uint8)
-#         timestamp = time.strftime("%Y-%m-%d %H:%M:%S")
-#         cv2.putText(frame_data, f"Mock Camera - {timestamp}", (10, 50), cv2.FONT_HERSHEY_SIMPLEX, 1, (255, 255, 255), 2)
-#
-#         # Преобразование в VideoFrame
-#         frame = VideoFrame.from_ndarray(frame_data, format="bgr24")
-#         frame.pts = None  # Обнуляем временные метки
-#         frame.time_base = None
-#         return frame
-#
-# # Обработка WebSocket-соединений
-# pcs = set()  # Множество для хранения активных соединений
-#
-# async def offer(request):
-#     pc = RTCPeerConnection(
-#         configuration={"iceServers": [{"urls": "stun:stun.l.google.com:19302"}]}
-#     )
-#     pcs.add(pc)
-#
-#     params = await request.json()
-#     print("Received SDP Offer:", params["sdp"])  # <-- Лог для отладки
-#
-#     offer = RTCSessionDescription(sdp=params["sdp"], type=params["type"])
-#     video_track = MockCameraStreamTrack()
-#     pc.addTrack(video_track)
-#
-#     await pc.setRemoteDescription(offer)
-#     answer = await pc.createAnswer()
-#     await pc.setLocalDescription(answer)
-#
-#     return web.json_response({
-#         "sdp": pc.localDescription.sdp,
-#         "type": pc.localDescription.type
-#     })
-#
-# # Завершение работы приложения
-# async def on_shutdown(app):
-#     coros = [pc.close() for pc in pcs]
-#     await asyncio.gather(*coros)
-#     pcs.clear()
-#
-# # Запуск сервера
-# app = web.Application()
-# app.on_shutdown.append(on_shutdown)
-# app.router.add_post("/offer", offer)
-#
-# if __name__ == "__main__":
-#     logging.info("Запуск сервера на http://localhost:8081")
-#     web.run_app(app, port=8081)
-
-# import os
-# import asyncio
-# from aiohttp import web
-# import numpy as np
-# import cv2
-# import time
-# from datetime import datetime
-#
-# # Путь к временной директории для хранения сегментов HLS
-# HLS_DIR = "hls"
-# os.makedirs(HLS_DIR, exist_ok=True)
-#
-# # Настройки HLS
-# SEGMENT_DURATION = 5  # Длительность каждого сегмента в секундах
-# SEGMENT_COUNT = 5     # Количество сохраняемых сегментов в плейлисте
-#
-# # Генерация фиктивного видеопотока
-# async def generate_video_stream():
-#     width, height = 640, 480
-#     frame_rate = 20  # Количество кадров в секунду
-#
-#     while True:
-#         # Создание чёрного кадра
-#         frame = np.zeros((height, width, 3), dtype=np.uint8)
-#
-#         # Добавление текущего времени на кадр
-#         timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-#         cv2.putText(frame, f"Mock Camera - {timestamp}", (10, 50), cv2.FONT_HERSHEY_SIMPLEX, 1, (255, 255, 255), 2)
-#
-#         yield frame
-#         await asyncio.sleep(1 / frame_rate)
-#
-# # Запись сегмента HLS
-# class HLSSegmenter:
-#     def __init__(self, directory, segment_duration, max_segments):
-#         self.directory = directory
-#         self.segment_duration = segment_duration
-#         self.max_segments = max_segments
-#         self.current_segment_index = 0
-#         self.frame_buffer = []
-#         self.start_time = None
-#
-#     async def write_frame(self, frame):
-#         if self.start_time is None:
-#             self.start_time = time.time()
-#
-#         self.frame_buffer.append(frame)
-#
-#         # Если накоплено достаточно кадров для нового сегмента
-#         elapsed_time = time.time() - self.start_time
-#         if elapsed_time >= self.segment_duration:
-#             await self.save_segment()
-#             self.start_time = time.time()
-#             self.frame_buffer = []
-#
-#     async def save_segment(self):
-#         segment_filename = os.path.join(self.directory, f"segment_{self.current_segment_index:03d}.ts")
-#         print(f"Saving segment: {segment_filename}")
-#
-#         # Сохраняем кадры в видеосегмент
-#         fourcc = cv2.VideoWriter_fourcc(*"mp4v")
-#         writer = cv2.VideoWriter(segment_filename, fourcc, 20, (640, 480))
-#
-#         for frame in self.frame_buffer:
-#             writer.write(frame)
-#
-#         writer.release()
-#
-#         # Обновляем индекс сегмента
-#         self.current_segment_index += 1
-#         if self.current_segment_index >= self.max_segments:
-#             self.current_segment_index = 0
-#
-#         # Удаляем старые сегменты
-#         self.cleanup_old_segments()
-#
-#     def cleanup_old_segments(self):
-#         for i in range(self.current_segment_index, self.current_segment_index + self.max_segments):
-#             old_segment = os.path.join(self.directory, f"segment_{i % self.max_segments:03d}.ts")
-#             if os.path.exists(old_segment):
-#                 os.remove(old_segment)
-#
-#     def generate_playlist(self):
-#         playlist = "#EXTM3U\n#EXT-X-VERSION:3\n#EXT-X-TARGETDURATION:5\n#EXT-X-MEDIA-SEQUENCE:{}\n".format(
-#             self.current_segment_index
-#         )
-#
-#         for i in range(self.current_segment_index, self.current_segment_index + self.max_segments):
-#             segment_index = i % self.max_segments
-#             segment_name = f"segment_{segment_index:03d}.ts"
-#             segment_path = os.path.join(self.directory, segment_name)
-#
-#             if os.path.exists(segment_path):
-#                 playlist += f"#EXTINF:{self.segment_duration},\n{segment_name}\n"
-#
-#         playlist += "#EXT-X-ENDLIST\n"
-#         return playlist
-#
-# # Обработка запросов к HLS-плейлисту и сегментам
-# async def handle_hls(request):
-#     path = request.match_info.get("path", "")
-#     file_path = os.path.join(HLS_DIR, path)
-#
-#     if not os.path.exists(file_path):
-#         if path == "stream.m3u8":
-#             # Возвращаем динамически сгенерированный плейлист
-#             playlist = hls_segmenter.generate_playlist()
-#             return web.Response(text=playlist, content_type="application/vnd.apple.mpegurl")
-#
-#         raise web.HTTPNotFound()
-#
-#     return web.FileResponse(file_path)
-#
-# # Основной цикл
-# async def main():
-#     global hls_segmenter
-#     hls_segmenter = HLSSegmenter(HLS_DIR, SEGMENT_DURATION, SEGMENT_COUNT)
-#
-#     # Запуск HTTP-сервера
-#     app = web.Application()
-#     app.router.add_get("/{path:.+}", handle_hls)
-#
-#     runner = web.AppRunner(app)
-#     await runner.setup()
-#     site = web.TCPSite(runner, "localhost", 8081)
-#     await site.start()
-#
-#     print("HLS server started at http://localhost:8081/stream.m3u8")
-#
-#     # Запуск генератора кадров
-#     video_generator = generate_video_stream()
-#
-#     try:
-#         while True:
-#             frame = await video_generator.__anext__()
-#             await hls_segmenter.write_frame(frame)
-#             await asyncio.sleep(0)  # Отдаем управление событийному циклу
-#     except asyncio.CancelledError:
-#         print("Stopping server...")
-#     finally:
-#         await runner.cleanup()
-# main.py
 import asyncio
+from datetime import datetime
+
 import websockets
 import cv2
+import numpy as np
 
-SERVER_URL = "ws://localhost:8080/video-stream"  # Адрес WebSocket-сервера
+SERVER_URL = "ws://localhost:8080/video-stream"
+
+
+async def send_video_old():
+    # cap = cv2.VideoCapture(0)  # Используем основную камеру
+    width, height = 640, 480
+    # Устанавливаем параметры камеры
+    # cap.set(cv2.CAP_PROP_FRAME_WIDTH, width)
+    # cap.set(cv2.CAP_PROP_FRAME_HEIGHT, height)
+
+    # ret, frame = cap.read()
+    # if not ret:
+    #     break  # Ошибка чтения кадра
+    #
+    # # Кодируем кадр в JPEG (без base64)
+    # _, buffer = cv2.imencode('.jpg', frame)
+    #
+    # # Отправляем бинарные данные напрямую
+    # await websocket.send(buffer.tobytes())
+    #
+    # # Задержка для FPS (30 кадров в секунду)
+    # await asyncio.sleep(1 / 30)
+
+    # cap.release()
+
+
+async def generate_frame():
+    """Генерирует кадр с текущим временем на черном фоне"""
+    frame = np.zeros((480, 640, 3), dtype=np.uint8)
+    current_time = datetime.now().strftime("%H:%M:%S.%f")[:-3]  # С миллисекундами
+
+    # Настройки текста
+    font = cv2.FONT_HERSHEY_SIMPLEX
+    font_scale = 2
+    thickness = 2
+    color = (255, 255, 255)  # Белый цвет
+
+    # Расчет позиции текста
+    (text_width, text_height), _ = cv2.getTextSize(
+        current_time, font, font_scale, thickness)
+    position = ((640 - text_width) // 2, (480 + text_height) // 2)
+
+    cv2.putText(frame, current_time, position, font, font_scale, color, thickness)
+    _, buffer = cv2.imencode('.jpg', frame)
+    return buffer.tobytes()
+
 
 async def send_video():
-    cap = cv2.VideoCapture(0)  # Используем основную камеру
+    while True:
+        try:
+            async with websockets.connect(
+                    SERVER_URL,
+                    max_size=10_000_000,
+                    ping_interval=5,
+                    ping_timeout=10
+            ) as websocket:
+                print(f"Connected to {SERVER_URL}")
+                while True:
+                    frame = await generate_frame()
+                    await websocket.send(frame)
+                    await asyncio.sleep(1 / 30)  # 30 FPS
 
-    # Устанавливаем параметры камеры
-    cap.set(cv2.CAP_PROP_FRAME_WIDTH, 640)
-    cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 480)
+        except websockets.exceptions.ConnectionClosedError:
+            print("Connection lost. Retry...")
+            await asyncio.sleep(1)
+        except Exception as e:
+            print(f"Error: {e}")
+            await asyncio.sleep(5)
 
-    async with websockets.connect(SERVER_URL, max_size=10_000_000) as websocket:  # Увеличенный лимит
-        while cap.isOpened():
-            ret, frame = cap.read()
-            if not ret:
-                break  # Ошибка чтения кадра
-
-            # Кодируем кадр в JPEG (без base64)
-            _, buffer = cv2.imencode('.jpg', frame)
-
-            # Отправляем бинарные данные напрямую
-            await websocket.send(buffer.tobytes())
-
-            # Задержка для FPS (30 кадров в секунду)
-            await asyncio.sleep(1 / 30)
-
-    cap.release()
 
 if __name__ == "__main__":
-    asyncio.run(send_video())
-
-
+    try:
+        asyncio.run(send_video())
+    except KeyboardInterrupt:
+        print("Client stopped")
