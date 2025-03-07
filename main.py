@@ -1,4 +1,5 @@
 import asyncio
+import os
 from datetime import datetime
 
 import websockets
@@ -34,11 +35,11 @@ async def send_video_old():
 async def generate_frame():
     """Генерирует кадр с текущим временем на черном фоне"""
     frame = np.zeros((480, 640, 3), dtype=np.uint8)
-    current_time = datetime.now().strftime("%H:%M:%S.%f")[:-3]  # С миллисекундами
+    current_time = datetime.now().strftime("%H:%M:%S.%f")[:-3] + "_stream_2"  # С миллисекундами
 
     # Настройки текста
     font = cv2.FONT_HERSHEY_SIMPLEX
-    font_scale = 2
+    font_scale = 1
     thickness = 2
     color = (255, 255, 255)  # Белый цвет
 
@@ -52,16 +53,16 @@ async def generate_frame():
     return buffer.tobytes()
 
 
-async def send_video():
+async def send_video(stream_id: str):
     while True:
         try:
             async with websockets.connect(
-                    SERVER_URL,
+                    f"{SERVER_URL}/{stream_id}",
                     max_size=10_000_000,
                     ping_interval=5,
                     ping_timeout=10
             ) as websocket:
-                print(f"Connected to {SERVER_URL}")
+                print(f"Connected to {SERVER_URL}/{stream_id}")
                 while True:
                     frame = await generate_frame()
                     await websocket.send(frame)
@@ -77,6 +78,7 @@ async def send_video():
 
 if __name__ == "__main__":
     try:
-        asyncio.run(send_video())
+        stream_id = os.environ.get('stream_id')
+        asyncio.run(send_video(stream_id))
     except KeyboardInterrupt:
         print("Client stopped")
