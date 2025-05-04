@@ -9,3 +9,5 @@ aws configure set endpoint_url http://localhost:4566
 aws --endpoint-url=http://localhost:4566 s3 mb s3://my-local-bucket
 aws --endpoint-url=http://localhost:4566 s3 ls
 ```
+
+docker run --name postgres-container -e POSTGRES_USER=postgres -e POSTGRES_PASSWORD=postgres -e POSTGRES_DB=somport -p 5432:5432 -d postgres:latest

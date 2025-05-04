@@ -116,7 +116,8 @@ async def websocket_endpoint(websocket: WebSocket, stream_id: str):
                 video_filename = f"video_{video_id}.mp4"
                 out = cv2.VideoWriter(video_filename, fourcc, 30.0, (640, 480))
                 for f in frames:
-                    out.write(f)
+                    if isinstance(f, np.ndarray):  # Убедимся, что кадр является массивом NumPy
+                        out.write(f)
                 out.release()
 
                 # Загрузка видео в S3
@@ -138,7 +139,8 @@ async def websocket_endpoint(websocket: WebSocket, stream_id: str):
             video_filename = f"video_{video_id}.mp4"
             out = cv2.VideoWriter(video_filename, fourcc, 30.0, (640, 480))
             for f in frames:
-                out.write(f)
+                if isinstance(f, np.ndarray):  # Убедимся, что кадр является массивом NumPy
+                    out.write(f)
             out.release()
             upload_video_to_s3(video_filename, stream_id, video_id)
 
